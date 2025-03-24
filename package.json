@@ -6,7 +6,7 @@
   "main": "index.js",
   "version": "0.0.1",
   "scripts": {
-    "start": "pnpx tsx src/index.ts",
+    "start": "mastra dev",
     "build": "mastra build"
   },
   "keywords": [

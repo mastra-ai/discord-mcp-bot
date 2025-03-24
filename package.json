@@ -6,8 +6,7 @@
   "main": "index.js",
   "version": "0.0.1",
   "scripts": {
-    "start": "mastra dev",
-    "build": "mastra build"
+    "start": "mastra dev"
   },
   "keywords": [
     "discord",

@@ -7,7 +7,7 @@ console.log("PATH", process.env.PATH);
 const mcpConfig = new MCPConfiguration({
   servers: {
     mastra: {
-      command: "/usr/local/bin/pnpx",
+      command: "pnpx",
       args: ["@mastra/mcp-docs-server@latest"],
     },
   },

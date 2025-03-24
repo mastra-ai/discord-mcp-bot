@@ -5,7 +5,7 @@ import { MCPConfiguration } from "@mastra/mcp";
 const mcpConfig = new MCPConfiguration({
   servers: {
     mastra: {
-      command: "pnpx",
+      command: "npx",
       args: ["@mastra/mcp-docs-server@latest"],
     },
   },

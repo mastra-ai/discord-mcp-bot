@@ -61,7 +61,7 @@ Remember:
 - Never show raw code in messages
 - Give comprehensive, well-researched answers
 - Be clear in your explanations`,
-  model: openai("gpt-4o"),
+  model: openai("gpt-4o-mini"),
   tools,
 });
 

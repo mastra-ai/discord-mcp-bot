@@ -5,6 +5,12 @@ config();
 
 let client: Client | null = null;
 
+// Add these constants at the top of the file, after imports
+const MAX_MESSAGE_LENGTH = 2000; // Maximum characters allowed
+const DISCORD_MESSAGE_LENGTH_LIMIT = 1990;
+const COOLDOWN_PERIOD = 10000; // 10 seconds in milliseconds
+const userCooldowns = new Map<string, number>();
+
 async function clearBotDirectMessages(channel: DMChannel): Promise<void> {
   try {
     let messagesDeleted = 0;
@@ -71,76 +77,128 @@ async function getDiscordClient(): Promise<Client> {
       // Ignore messages from bots and non-DM channels
       if (message.author.bot || message.channel.type !== ChannelType.DM) return;
 
-      if (message.channel.type === ChannelType.DM && message.content === '!cleardm') {
-        await message.reply('Deleting my messages...');
+      // Check message length
+      if (message.content.length > MAX_MESSAGE_LENGTH) {
+        await message.reply(
+          `Sorry, your message is too long (${message.content.length} characters). ` +
+            `Please keep it under ${MAX_MESSAGE_LENGTH} characters.`
+        );
+        return;
+      }
+
+      // Check cooldown
+      const now = Date.now();
+      const cooldownEnd = userCooldowns.get(message.author.id) || 0;
+
+      if (now < cooldownEnd) {
+        const remainingTime = Math.ceil((cooldownEnd - now) / 1000);
+        await message.reply(
+          `Please wait ${remainingTime} seconds before sending another message.`
+        );
+        return;
+      }
+
+      if (
+        message.channel.type === ChannelType.DM &&
+        message.content === "!cleardm"
+      ) {
+        await message.reply("Deleting my messages...");
         await clearBotDirectMessages(message.channel as DMChannel);
         return;
       }
 
-      const agent = await mastra.getAgent('discordMCPBotAgent');
-      const { fullStream } = await agent.stream(message.content, {
-        maxSteps: 10,
-      });
+      try {
+        // Set cooldown before processing
+        userCooldowns.set(message.author.id, now + COOLDOWN_PERIOD);
 
-      let messageBuffer = '';
-      let filesToSend: string[] = []; // Array to collect file paths
-      const checksShown = new Map<string, boolean>();
+        const agent = await mastra.getAgent("discordMCPBotAgent");
+        const { fullStream } = await agent.stream(message.content, {
+          maxSteps: 10,
+        });
 
-      for await (const part of fullStream) {
-        switch (part.type) {
-          case 'text-delta':
-            messageBuffer += part.textDelta;
-            break;
-          case 'tool-call':
-            console.log('tool call', part.toolName);
-            if (part.toolName.includes('mastra_mastra')) {
-              const toolName = part.toolName.replace('mastra_mastra', '');
-              if (!checksShown.has(toolName)) {
-                await message.channel.send(`Checking ${toolName}. Please wait...`);
-                checksShown.set(toolName, true);
+        let messageBuffer = "";
+        // let filesToSend: string[] = []; // Array to collect file paths
+        const checksShown = new Map<string, boolean>();
+
+        for await (const part of fullStream) {
+          console.log("part", part);
+          switch (part.type) {
+            case "text-delta":
+              messageBuffer += part.textDelta;
+              break;
+            case "tool-call":
+              console.log("tool call", part.toolName);
+              if (part.toolName.includes("mastra_mastra")) {
+                const toolName = part.toolName.replace("mastra_mastra", "");
+                if (!checksShown.has(toolName)) {
+                  await message.channel.send(
+                    `Checking ${toolName}. Please wait...`
+                  );
+                  checksShown.set(toolName, true);
+                }
               }
-            }
-            break;
-          case 'tool-result':
-            console.log('tool result', part.toolName);
-            // if (part.toolName.includes('codeFileTool')) {
-            //   try {
-            //     const filepath = part.result;
-            //     if (filepath && typeof filepath === 'string') {
-            //       filesToSend.push(filepath);
-            //     }
-            //   } catch (error) {
-            //     console.error('Error handling tool result:', error);
-            //     await message.channel.send('Sorry, there was an error processing the code file.');
-            //   }
-            // }
-            console.log('finished tool call');
-            break;
-          case 'error':
-            console.error('Tool error:', part.error);
-            await message.channel.send('Sorry, there was an error executing the tool.');
-            break;
-          case 'finish':
-            break;
+              break;
+            case "tool-result":
+              console.log("tool result", part.toolName);
+              // if (part.toolName.includes('codeFileTool')) {
+              //   try {
+              //     const filepath = part.result;
+              //     if (filepath && typeof filepath === 'string') {
+              //       filesToSend.push(filepath);
+              //     }
+              //   } catch (error) {
+              //     console.error('Error handling tool result:', error);
+              //     await message.channel.send('Sorry, there was an error processing the code file.');
+              //   }
+              // }
+              console.log("finished tool call");
+              break;
+            case "error":
+              console.error("Tool error:", part.error);
+              await message.channel.send(
+                "Sorry, there was an error executing the tool."
+              );
+              break;
+            case "finish":
+              break;
+          }
+          if (messageBuffer.length > DISCORD_MESSAGE_LENGTH_LIMIT) {
+            await message.channel.send(messageBuffer);
+            messageBuffer = "";
+          }
         }
-        if (messageBuffer.length > 1990) {
-          await message.channel.send(messageBuffer);
-          messageBuffer = '';
-        }
-      }
 
-      if (messageBuffer.length > 0) {
-        await message.channel.send(messageBuffer);
+        if (messageBuffer.length > 0) {
+          await message.channel.send(messageBuffer);
+        }
+        messageBuffer = "";
+        // Send all collected files together
+        // if (filesToSend.length > 0) {
+        //   await message.channel.send({
+        //     content: 'Here are the code examples:',
+        //     files: filesToSend,
+        //   });
+        //   filesToSend = []; // Clear the array
+        // }
+      } catch (error: any) {
+        console.error("Error processing message:", error);
+
+        // Remove cooldown on error so user can retry immediately
+        userCooldowns.delete(message.author.id);
+
+        if (
+          error?.lastError?.statusCode === 429 &&
+          error?.lastError?.data?.error?.code === "rate_limit_exceeded"
+        ) {
+          await message.channel.send(
+            "Sorry, the request was too large for me to process. Please try breaking it down into smaller parts or wait a moment before trying again."
+          );
+        } else {
+          await message.channel.send(
+            "Sorry, I encountered an error while processing your request. Please try again later."
+          );
+        }
       }
-      messageBuffer = '';
-      // Send all collected files together
-      // if (filesToSend.length > 0) {
-      //   await message.channel.send({
-      //     content: 'Here are the code examples:',
-      //     files: filesToSend,
-      //   });
-      //   filesToSend = []; // Clear the array
-      // }
     });
 
     client!.once('ready', () => {
@@ -172,3 +230,13 @@ async function main() {
 
 // Start the bot
 main();
+
+// Optional: Add a cleanup interval for the cooldowns map
+setInterval(() => {
+  const now = Date.now();
+  for (const [userId, cooldownEnd] of userCooldowns.entries()) {
+    if (cooldownEnd < now) {
+      userCooldowns.delete(userId);
+    }
+  }
+}, 60000); // Clean up every minute

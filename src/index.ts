@@ -58,7 +58,7 @@ async function getDiscordClient(): Promise<Client> {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
-      //   GatewayIntentBits.GuildMembers,
+      GatewayIntentBits.GuildMembers,
       GatewayIntentBits.DirectMessages,
     ],
     partials: [Partials.Channel, Partials.Message],
@@ -67,20 +67,35 @@ async function getDiscordClient(): Promise<Client> {
   // Log in to Discord
   const token = process.env.DISCORD_BOT_TOKEN;
   if (!token) {
-    throw new Error('DISCORD_BOT_TOKEN is not set in environment variables');
+    throw new Error("DISCORD_BOT_TOKEN is not set in environment variables");
   }
 
-  console.log('Logging in to Discord...');
+  console.log("Logging in to Discord...");
   return new Promise((resolve, reject) => {
     // Add message listener here, before the 'ready' event
-    client!.on('messageCreate', async message => {
-      // Ignore messages from bots and non-DM channels
-      if (message.author.bot || message.channel.type !== ChannelType.DM) return;
+    client!.on("messageCreate", async (message) => {
+      // Ignore messages from bots
+      if (message.author.bot) return;
 
-      // Check message length
-      if (message.content.length > MAX_MESSAGE_LENGTH) {
+      // Check if the message is a DM or if the bot was mentioned
+      const isMentioned = message.mentions.users.has(client!.user!.id);
+      const isDM = message.channel.type === ChannelType.DM;
+
+      if (!isDM && !isMentioned) return;
+
+      // Remove bot mention from content if it exists
+      let content = message.content
+        .replace(new RegExp(`<@!?${client!.user!.id}>`, "g"), "")
+        .trim();
+
+      if (!content) {
+        await message.reply("Hello! How can I help you?");
+        return;
+      }
+
+      if (content.length > MAX_MESSAGE_LENGTH) {
         await message.reply(
-          `Sorry, your message is too long (${message.content.length} characters). ` +
+          `Sorry, your message is too long (${content.length} characters). ` +
             `Please keep it under ${MAX_MESSAGE_LENGTH} characters.`
         );
         return;
@@ -98,10 +113,7 @@ async function getDiscordClient(): Promise<Client> {
         return;
       }
 
-      if (
-        message.channel.type === ChannelType.DM &&
-        message.content === "!cleardm"
-      ) {
+      if (isDM && content === "!cleardm") {
         await message.reply("Deleting my messages...");
         await clearBotDirectMessages(message.channel as DMChannel);
         return;
@@ -111,13 +123,28 @@ async function getDiscordClient(): Promise<Client> {
         // Set cooldown before processing
         userCooldowns.set(message.author.id, now + COOLDOWN_PERIOD);
 
+        // Create a thread if we're not in a DM or thread already
+        const responseChannel =
+          isDM || message.channel.isThread()
+            ? message.channel
+            : await message.startThread({
+                name: `Question from ${message.author.username}`,
+                autoArchiveDuration: 60,
+              });
+
+        if (!isDM && !message.channel.isThread()) {
+          await message.reply("I'll help you with your question!");
+        } else {
+          // First message in response should be a reply for context
+          await message.reply("Let me help you with that!");
+        }
+
         const agent = await mastra.getAgent("discordMCPBotAgent");
-        const { fullStream } = await agent.stream(message.content, {
+        const { fullStream } = await agent.stream(content, {
           maxSteps: 10,
         });
 
         let messageBuffer = "";
-        // let filesToSend: string[] = []; // Array to collect file paths
         const checksShown = new Map<string, boolean>();
 
         for await (const part of fullStream) {
@@ -131,9 +158,7 @@ async function getDiscordClient(): Promise<Client> {
               if (part.toolName.includes("mastra_mastra")) {
                 const toolName = part.toolName.replace("mastra_mastra", "");
                 if (!checksShown.has(toolName)) {
-                  await message.channel.send(
-                    `Checking ${toolName}. Please wait...`
-                  );
+                  await message.reply(`Checking ${toolName}. Please wait...`);
                   checksShown.set(toolName, true);
                 }
               }
@@ -155,7 +180,7 @@ async function getDiscordClient(): Promise<Client> {
               break;
             case "error":
               console.error("Tool error:", part.error);
-              await message.channel.send(
+              await message.reply(
                 "Sorry, there was an error executing the tool."
               );
               break;
@@ -163,56 +188,53 @@ async function getDiscordClient(): Promise<Client> {
               break;
           }
           if (messageBuffer.length > DISCORD_MESSAGE_LENGTH_LIMIT) {
-            await message.channel.send(messageBuffer);
+            // Use send() for stream chunks to avoid spam
+            await responseChannel.send(messageBuffer);
             messageBuffer = "";
           }
         }
 
         if (messageBuffer.length > 0) {
-          await message.channel.send(messageBuffer);
+          // Use send() for the final message if it's part of a stream
+          await responseChannel.send(messageBuffer);
         }
-        messageBuffer = "";
-        // Send all collected files together
-        // if (filesToSend.length > 0) {
-        //   await message.channel.send({
-        //     content: 'Here are the code examples:',
-        //     files: filesToSend,
-        //   });
-        //   filesToSend = []; // Clear the array
-        // }
       } catch (error: any) {
         console.error("Error processing message:", error);
 
-        // Remove cooldown on error so user can retry immediately
+        // Remove cooldown on error
         userCooldowns.delete(message.author.id);
 
-        if (
+        const errorMessage =
           error?.lastError?.statusCode === 429 &&
           error?.lastError?.data?.error?.code === "rate_limit_exceeded"
-        ) {
-          await message.channel.send(
-            "Sorry, the request was too large for me to process. Please try breaking it down into smaller parts or wait a moment before trying again."
-          );
+            ? "Sorry, the request was too large for me to process. Please try breaking it down into smaller parts or wait a moment before trying again."
+            : "Sorry, I encountered an error while processing your request. Please try again later.";
+
+        // Send error message in the appropriate channel
+        if (message.channel.isThread() || isDM) {
+          await message.reply(errorMessage);
         } else {
-          await message.channel.send(
-            "Sorry, I encountered an error while processing your request. Please try again later."
-          );
+          const thread = await message.startThread({
+            name: `Error Response for ${message.author.username}`,
+            autoArchiveDuration: 60,
+          });
+          await thread.send(errorMessage);
         }
       }
     });
 
-    client!.once('ready', () => {
+    client!.once("ready", () => {
       console.log(`Logged in as ${client!.user!.tag}`);
       resolve(client!);
     });
 
-    client!.once('error', error => {
-      console.error('Discord client error:', error);
+    client!.once("error", (error) => {
+      console.error("Discord client error:", error);
       reject(error);
     });
 
-    client!.login(token).catch(error => {
-      console.error('Discord login error:', error);
+    client!.login(token).catch((error) => {
+      console.error("Discord login error:", error);
       reject(error);
     });
   });

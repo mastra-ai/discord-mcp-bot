@@ -13,7 +13,7 @@ This Discord bot leverages Mastra's MCP tools and GPT-4 to:
 ## Prerequisites
 
 - Node.js v20.0+
-- pnpm (recommended) or npm
+- npm
 - OpenAI API key
 - Discord bot token
 
@@ -29,7 +29,7 @@ This Discord bot leverages Mastra's MCP tools and GPT-4 to:
 2. Install dependencies:
 
    ```bash
-   pnpm install
+   npm install
    ```
 
 3. Create a `.env` file with your API keys:
@@ -42,7 +42,7 @@ This Discord bot leverages Mastra's MCP tools and GPT-4 to:
 4. Run the bot:
 
    ```bash
-   pnpm start
+   npm start
    ```
 
 ## Setting Up a Discord Bot

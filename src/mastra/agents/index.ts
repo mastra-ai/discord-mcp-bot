@@ -7,8 +7,8 @@ console.log("PATH", process.env.PATH);
 const mcpConfig = new MCPConfiguration({
   servers: {
     mastra: {
-      command: "npx -y",
-      args: ["@mastra/mcp-docs-server@latest"],
+      command: "npx",
+      args: ["-y", "@mastra/mcp-docs-server@latest"],
     },
   },
 });

@@ -132,12 +132,8 @@ async function getDiscordClient(): Promise<Client> {
                 autoArchiveDuration: 60,
               });
 
-        if (!isDM && !message.channel.isThread()) {
-          await message.reply("I'll help you with your question!");
-        } else {
-          // First message in response should be a reply for context
-          await message.reply("Let me help you with that!");
-        }
+        // First message in response should be a reply for context
+        await responseChannel.send("Let me help you with that!");
 
         const agent = await mastra.getAgent("discordMCPBotAgent");
         const { fullStream } = await agent.stream(content, {
@@ -148,7 +144,6 @@ async function getDiscordClient(): Promise<Client> {
         const checksShown = new Map<string, boolean>();
 
         for await (const part of fullStream) {
-          console.log("part", part);
           switch (part.type) {
             case "text-delta":
               messageBuffer += part.textDelta;

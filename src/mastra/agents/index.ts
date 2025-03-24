@@ -2,10 +2,12 @@ import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { MCPConfiguration } from "@mastra/mcp";
 
+console.log("PATH", process.env.PATH);
+
 const mcpConfig = new MCPConfiguration({
   servers: {
     mastra: {
-      command: "npx",
+      command: "pnpx",
       args: ["@mastra/mcp-docs-server@latest"],
     },
   },

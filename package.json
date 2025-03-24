@@ -6,7 +6,7 @@
   "main": "index.js",
   "version": "0.0.1",
   "scripts": {
-    "start": "npx tsx src/index.ts"
+    "start": "pnpx tsx src/index.ts"
   },
   "keywords": [
     "discord",
@@ -23,5 +23,8 @@
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.7",
     "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.13"
   }
 }

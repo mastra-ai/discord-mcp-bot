@@ -74,35 +74,57 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
   try {
     console.log("Starting to clear messages...");
     console.log("Channel ID:", interaction.channel_id);
-    console.log("Application ID:", interaction.application_id);
+
     let messagesDeleted = 0;
     let lastId;
 
     while (true) {
       console.log("Fetching messages batch, lastId:", lastId);
-      console.log(
-        "Routes.channelMessages returns:",
-        Routes.channelMessages(interaction.channel_id)
-      );
-
-      const queryString = new URLSearchParams({
-        limit: "100",
-        ...(lastId ? { before: lastId } : {}),
-      });
-
-      const url = `${Routes.channelMessages(
-        interaction.channel_id
-      )}?${queryString}`;
-
-      console.log("Making request to:", url);
 
       try {
+        // Let's try a direct fetch first with explicit error handling
+        const response = await fetch(
+          `https://discord.com/api/v10/channels/${
+            interaction.channel_id
+          }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`,
+          {
+            headers: {
+              Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+
+        console.log("Response status:", response.status);
+        console.log("Response headers:", response.headers);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("Discord API Error:", {
+            status: response.status,
+            statusText: response.statusText,
+            body: errorText,
+          });
+          throw new Error(`Discord API error: ${response.status} ${errorText}`);
+        }
+
+        const rawMessages = await response.json();
+        console.log("Raw messages:", rawMessages);
+
+        // Use the proper REST method with options
+        const options: any = { limit: 100 };
+        if (lastId) options.before = lastId;
+
+        console.log("Making request with options:", options);
+
         const endpoint = `channels/${interaction.channel_id}/messages`;
         console.log("Using endpoint:", `/${endpoint}`);
 
         const messages = (await rest.get(
-          `/${endpoint}`
+          Routes.channelMessages(interaction.channel_id),
+          { body: options } // Use body instead of query
         )) as RESTGetAPIChannelMessagesResult;
+
         console.log("Raw response:", messages);
 
         if (!messages || !Array.isArray(messages)) {
@@ -178,7 +200,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const userId = isDM ? interaction.user.id : interaction.member.user.id;
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
-    console.log("Received application command:", interaction);
     const { name } = interaction.data;
 
     if (name === "cleardm") {

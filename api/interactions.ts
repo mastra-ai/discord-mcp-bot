@@ -4,12 +4,16 @@ import {
   verifyKey,
 } from "discord-interactions";
 import { ChannelType } from "discord.js";
+import { REST } from "discord.js";
+import { Routes } from "discord-api-types/v10";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import https from "node:https";
-
 
 config();
+
+const rest = new REST({ version: "10" }).setToken(
+  process.env.DISCORD_BOT_TOKEN!
+);
 
 const MAX_MESSAGE_LENGTH = 2000;
 const DISCORD_MESSAGE_LENGTH_LIMIT = 2000;
@@ -22,56 +26,29 @@ async function updateDiscordMessage(
   threadId?: string,
   messageId?: string
 ) {
-  let endpoint: string;
-  let method: string;
-  let headers: Record<string, string>;
-
-  // Create HTTPS agent for this request
-  const agent = new https.Agent({
-    keepAlive: true,
-    rejectUnauthorized: true,
-    timeout: 30000, // 30 second timeout
-  });
-
-  if (threadId) {
-    headers = {
-      Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-      "Content-Type": "application/json",
-    };
-
-    if (messageId) {
-      endpoint = `https://discord.com/api/v10/channels/${threadId}/messages/${messageId}`;
-      method = "PATCH";
-    } else {
-      endpoint = `https://discord.com/api/v10/channels/${threadId}/messages`;
-      method = "POST";
-    }
-  } else {
-    endpoint = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
-    method = "PATCH";
-    headers = {
-      "Content-Type": "application/json",
-    };
-  }
-
   try {
-    const response = await fetch(endpoint, {
-      method,
-      headers,
-      body: JSON.stringify({ content }),
-      agent, // Add the agent here
-      timeout: 30000, // Add explicit timeout
-    } as RequestInit);
-
-    if (!response.ok) {
-      throw new Error(
-        `Failed to update message: ${response.status} ${response.statusText}`
+    if (threadId) {
+      if (messageId) {
+        return await rest.patch(Routes.channelMessage(threadId, messageId), {
+          body: { content },
+        });
+      } else {
+        return await rest.post(Routes.channelMessages(threadId), {
+          body: { content },
+        });
+      }
+    } else {
+      return await rest.patch(
+        Routes.webhookMessage(
+          interaction.application_id,
+          interaction.token,
+          "@original"
+        ),
+        { body: { content } }
       );
     }
-
-    return await response.json();
   } catch (error) {
-    console.error("Fetch error:", error);
+    console.error("REST error:", error);
     throw error;
   }
 }
@@ -95,40 +72,24 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
     let messagesDeleted = 0;
     let lastId;
 
-    const agent = new https.Agent({
-      keepAlive: true,
-      rejectUnauthorized: true,
-      timeout: 30000,
-    });
-
     while (true) {
-      const url: string = `https://discord.com/api/v10/channels/${
-        interaction.channel_id
-      }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
-      const response = await fetch(url, {
-        headers: {
-          Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-        },
-        agent,
-        timeout: 30000,
-      } as RequestInit);
+      const messages = (await rest.get(
+        Routes.channelMessages(interaction.channel_id),
+        {
+          limit: 100,
+          before: lastId,
+        }
+      )) as any[];
 
-      const messages = await response.json();
       if (!messages.length) break;
 
       const botMessages = messages.filter(
-        (msg: any) => msg.author.id === interaction.application_id
+        (msg) => msg.author.id === interaction.application_id
       );
 
       for (const message of botMessages) {
-        await fetch(
-          `https://discord.com/api/v10/channels/${interaction.channel_id}/messages/${message.id}`,
-          {
-            method: "DELETE",
-            headers: {
-              Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-            },
-          }
+        await rest.delete(
+          Routes.channelMessage(interaction.channel_id, message.id)
         );
         messagesDeleted++;
         await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -226,29 +187,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         userCooldowns.set(userId, now + COOLDOWN_PERIOD);
 
         if (!isDM) {
-          const threadResponse = await fetch(
-            `https://discord.com/api/v10/channels/${interaction.channel_id}/threads`,
+          const threadData = (await rest.post(
+            Routes.threads(interaction.channel_id),
             {
-              method: "POST",
-              headers: {
-                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
+              body: {
                 name: `Chat with ${username}`,
                 auto_archive_duration: 60,
                 type: ChannelType.PublicThread,
-              }),
-              agent: new https.Agent({
-                keepAlive: true,
-                rejectUnauthorized: true,
-                timeout: 30000,
-              }),
-              timeout: 30000,
-            } as RequestInit
-          );
-
-          const threadData = await threadResponse.json();
+              },
+            }
+          )) as any;
           threadId = threadData.id;
 
           await res.send({
@@ -280,13 +228,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ messages: [{ role: "user", content }] }),
-            agent: new https.Agent({
-              keepAlive: true,
-              rejectUnauthorized: true,
-              timeout: 30000,
-            }),
-            timeout: 30000,
-          } as RequestInit
+          }
         );
 
         if (!response.ok) {

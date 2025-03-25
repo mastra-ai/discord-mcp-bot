@@ -3,8 +3,7 @@ import {
   InteractionResponseType,
   verifyKey,
 } from "discord-interactions";
-import { ChannelType } from "discord.js";
-import { REST } from "discord.js";
+import { ChannelType, REST, RESTGetAPIChannelMessagesQuery } from "discord.js";
 import { Routes } from "discord-api-types/v10";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
@@ -73,12 +72,13 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
     let lastId;
 
     while (true) {
+      const queryString = new URLSearchParams({
+        limit: "100",
+        ...(lastId ? { before: lastId } : {}),
+      });
+
       const messages = (await rest.get(
-        Routes.channelMessages(interaction.channel_id),
-        {
-          limit: 100,
-          before: lastId,
-        }
+        `${Routes.channelMessages(interaction.channel_id)}?${queryString}`
       )) as any[];
 
       if (!messages.length) break;

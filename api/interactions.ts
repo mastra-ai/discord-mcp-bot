@@ -138,12 +138,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const interaction = req.body;
-  const isDM = interaction.channel.type === ChannelType.DM;
-  const userId = isDM ? interaction.user.id : interaction.member.user.id;
-
   if (interaction.type === InteractionType.PING) {
     return res.send({ type: InteractionResponseType.PONG });
   }
+  const isDM = interaction.channel.type === ChannelType.DM;
+  const userId = isDM ? interaction.user.id : interaction.member.user.id;
+
+
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name } = interaction.data;

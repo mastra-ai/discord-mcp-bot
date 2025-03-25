@@ -37,6 +37,8 @@ This Discord bot leverages Mastra's MCP tools and GPT-4 to:
    ```
    OPENAI_API_KEY=your_openai_api_key
    DISCORD_BOT_TOKEN=your_discord_bot_token  
+   DISCORD_CLIENT_ID=your_discord_client_id
+   DISCORD_PUBLIC_KEY=your_discord_public_key
    ```
 
 4. Run the bot:
@@ -78,14 +80,23 @@ This Discord bot leverages Mastra's MCP tools and GPT-4 to:
 - **Intelligent Responses**: Uses GPT-4 to provide accurate and contextual answers
 - **Documentation Links**: Provides relevant links to Mastra documentation
 - **Code Examples**: Shares appropriate code examples from the Mastra repository
-- **DM Cleanup**: Users can type `!cleardm` to clear bot messages in their DMs
+- **Slash Commands**: Uses Discord's slash commands to interact with the bot
+   - `/ask`: Ask the bot a question
+   - `/cleardm`: Clear the bot messages in the user's DMs
+- **Threads**: Uses Discord's threads to provide a better user experience
 
 ## Project Structure
 
-- `src/index.ts`: Main bot implementation and Discord client setup
+- `api/interactions.ts`: Main bot implementation and Discord client setup
 - `src/mastra/index.ts`: Mastra instance initialization
 - `src/mastra/agents/index.ts`: Discord MCP bot agent configuration
 - `src/mastra/tools/index.ts`: Tool implementations for code file handling
+
+## Scripts
+
+- `scripts/register-commands.ts`: Register the bot commands
+- `scripts/delete-commands.ts`: Delete the bot commands
+- `scripts/list-commands.ts`: List the bot commands
 
 ## Implementation Notes
 

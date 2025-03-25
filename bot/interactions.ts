@@ -11,7 +11,7 @@ config();
 
 // Add these constants at the top of the file, after imports
 const MAX_MESSAGE_LENGTH = 2000; // Maximum characters allowed
-const DISCORD_MESSAGE_LENGTH_LIMIT = 1990;
+const DISCORD_MESSAGE_LENGTH_LIMIT = 2000;
 const COOLDOWN_PERIOD = 10000; // 10 seconds in milliseconds
 const userCooldowns = new Map<string, number>();
 
@@ -77,21 +77,43 @@ async function updateDiscordMessage(
   content: string,
   threadId?: string
 ) {
-  const endpoint = threadId
-    ? `https://discord.com/api/v10/channels/${threadId}/messages`
-    : `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
+  let endpoint: string;
+  let method: string;
+  let headers: Record<string, string>;
 
-  const method = threadId ? "POST" : "PATCH";
-  const headers = {
-    "Content-Type": "application/json",
-    ...(threadId && { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }),
-  };
+  if (threadId) {
+    // Thread message handling
+    headers = {
+      Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+      "Content-Type": "application/json",
+    };
 
-  await fetch(endpoint, {
+    // Create new message in thread
+    endpoint = `https://discord.com/api/v10/channels/${threadId}/messages`;
+    method = "POST";
+  } else {
+    // Non-thread message handling (original interaction response)
+    endpoint = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
+    method = "PATCH";
+    headers = {
+      "Content-Type": "application/json",
+    };
+  }
+
+  const response = await fetch(endpoint, {
     method,
     headers,
     body: JSON.stringify({ content }),
   });
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to update message: ${response.status} ${response.statusText}`
+    );
+  }
+
+  // Return the message data in case we need the ID for future updates
+  return await response.json();
 }
 
 // Combine JSON parsing and verification into one middleware
@@ -116,67 +138,45 @@ app.post("/interactions", express.json(), async (req, res, next) => {
   }
 
   const interaction = req.body;
-
   const isDM = interaction.channel.type === ChannelType.DM;
-
   const userId = isDM ? interaction.user.id : interaction.member.user.id;
 
   if (interaction.type === InteractionType.PING) {
-    return res.send({
-      type: InteractionResponseType.PONG,
-    });
+    return res.send({ type: InteractionResponseType.PONG });
   }
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name } = interaction.data;
 
     if (name === "cleardm") {
-      // Only allow in DMs
-      if (interaction.channel.type !== ChannelType.DM) {
+      if (!isDM) {
         return res.send({
           type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            content: "This command can only be used in DMs.",
-          },
+          data: { content: "This command can only be used in DMs." },
         });
       }
 
       await res.send({
         type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
-        data: {
-          content: "Deleting my messages...",
-        },
+        data: { content: "Deleting my messages..." },
       });
 
       try {
         await clearBotDirectMessages(interaction);
       } catch (error) {
         console.error("Error:", error);
-        await fetch(
-          `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: "Error clearing messages.",
-            }),
-          }
-        );
+        await updateDiscordMessage(interaction, "Error clearing messages.");
       }
       return;
     }
 
     if (name === "ask") {
+      let threadId;
       try {
         const content = interaction.data.options[0].value;
-
-        // Get username safely, handling both DM and server contexts
         const username = isDM
           ? interaction.user.username
           : interaction.member.user.username;
-
-        // Get user ID safely for cooldowns
-        const userId = isDM ? interaction.user.id : interaction.member.user.id;
 
         // Check message length
         if (content.length > MAX_MESSAGE_LENGTH) {
@@ -205,17 +205,8 @@ app.post("/interactions", express.json(), async (req, res, next) => {
         // Set cooldown
         userCooldowns.set(userId, now + COOLDOWN_PERIOD);
 
-        // Acknowledge the interaction
-        await res.send({
-          type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
-          data: {
-            content: "Thinking about your question...",
-          },
-        });
-
-        // Create thread if not in DM
-        let threadId;
         if (!isDM) {
+          // Create thread
           const threadResponse = await fetch(
             `https://discord.com/api/v10/channels/${interaction.channel_id}/threads`,
             {
@@ -225,7 +216,7 @@ app.post("/interactions", express.json(), async (req, res, next) => {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                name: `Question from ${username}`,
+                name: `Chat with ${username}`,
                 auto_archive_duration: 60,
                 type: ChannelType.PublicThread,
               }),
@@ -235,21 +226,33 @@ app.post("/interactions", express.json(), async (req, res, next) => {
           const threadData = await threadResponse.json();
           threadId = threadData.id;
 
-          // Update the original message to point to the thread
+          // Acknowledge with thread creation
+          await res.send({
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: `I've created a thread for our conversation: <#${threadId}>`,
+            },
+          });
+
+          // Send thinking message
           await updateDiscordMessage(
             interaction,
-            `I've created a thread for our conversation: <#${threadId}>`
+            "Thinking about your question...",
+            threadId
           );
+        } else {
+          // In DMs, use deferred response
+          await res.send({
+            type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
+          });
         }
 
-        // Make request to your Mastra server
+        // Make request to Mastra server
         const response = await fetch(
           `${process.env.MASTRA_URL}/api/agents/discordMCPBotAgent/generate`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ messages: [{ role: "user", content }] }),
           }
         );
@@ -257,33 +260,22 @@ app.post("/interactions", express.json(), async (req, res, next) => {
           throw new Error("Failed to generate response");
         }
         const data = await response.json();
-
-        const messageBuffer = await handleResponse(
-          data.text,
-          interaction,
-          threadId
-        );
-
-        if (messageBuffer.length > 0) {
-          await updateDiscordMessage(interaction, messageBuffer, threadId);
-        }
+        await handleResponse(data.text, interaction, threadId);
       } catch (error) {
-        // Remove cooldown on error using the correct user ID
+        // Remove cooldown on error
         userCooldowns.delete(userId);
         console.error("Error:", error);
-        await fetch(
-          `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              content: "Sorry, I encountered an error processing your request.",
-            }),
-          }
+        await updateDiscordMessage(
+          interaction,
+          "Sorry, I encountered an error processing your request.",
+          threadId
         );
       }
+      return;
     }
   }
+
+  return res.status(400).send("Unknown interaction type");
 });
 
 const PORT = process.env.PORT || 3003;
@@ -330,20 +322,13 @@ async function handleResponse(
   text: string,
   interaction: CommandInteraction,
   threadId?: string
-): Promise<string> {
-  // If text is under limit, return it for final sending
-  if (text.length < DISCORD_MESSAGE_LENGTH_LIMIT) {
-    return text;
-  }
-
-  // Split into chunks and send all but the last one
+): Promise<void> {
   let remaining = text;
-  while (remaining.length > DISCORD_MESSAGE_LENGTH_LIMIT) {
+
+  // Send remaining chunks as new messages
+  while (remaining.length > 0) {
     const chunk = remaining.slice(0, DISCORD_MESSAGE_LENGTH_LIMIT);
     remaining = remaining.slice(DISCORD_MESSAGE_LENGTH_LIMIT);
     await updateDiscordMessage(interaction, chunk, threadId);
   }
-
-  // Return the final chunk for sending
-  return remaining;
 }

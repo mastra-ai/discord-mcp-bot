@@ -7,7 +7,7 @@ config();
 const commands = [
   {
     name: "ask",
-    description: "Ask the AI a question",
+    description: "Ask the MCP bot a question about Mastra",
     options: [
       {
         name: "question",

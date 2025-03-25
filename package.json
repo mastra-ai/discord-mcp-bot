@@ -6,9 +6,11 @@
   "main": "index.js",
   "version": "0.0.1",
   "scripts": {
-    "start": "npx tsx bot/interactions.ts",
+    "start": "npx tsx api/interactions.ts",
+    "dev": "npx tsx api/interactions.ts",
     "register": "npx tsx scripts/register-commands.ts",
-    "dev": "npx tsx bot/interactions.ts"
+    "delete": "npx tsx scripts/delete-commands.ts",
+    "list": "npx tsx scripts/list-commands.ts"
   },
   "keywords": [
     "discord",

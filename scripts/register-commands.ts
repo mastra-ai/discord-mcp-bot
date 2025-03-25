@@ -17,6 +17,10 @@ const commands = [
       },
     ],
   },
+  {
+    name: "cleardm",
+    description: "Clear bot messages in DM",
+  },
 ];
 
 // Create REST instance

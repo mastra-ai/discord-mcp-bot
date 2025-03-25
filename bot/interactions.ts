@@ -3,9 +3,9 @@ import {
   InteractionResponseType,
   verifyKey,
 } from "discord-interactions";
+import { ChannelType } from "discord.js"; // Import from discord.js
 import express from "express";
 import { config } from "dotenv";
-import { mastra } from "../src/mastra";
 
 config();
 
@@ -26,6 +26,55 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// Add DM clearing function
+async function clearBotDirectMessages(interaction: any): Promise<void> {
+  try {
+    let messagesDeleted = 0;
+    let lastId;
+
+    while (true) {
+      // Fetch messages using Discord's API
+      const url = `https://discord.com/api/v10/channels/${
+        interaction.channel_id
+      }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
+
+      const response = await fetch(url, {
+        headers: {
+          Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+        },
+      });
+
+      const messages = await response.json();
+      if (!messages.length) break;
+
+      // Filter bot messages
+      const botMessages = messages.filter(
+        (msg: any) => msg.author.id === interaction.application_id
+      );
+
+      // Delete each bot message
+      for (const message of botMessages) {
+        await fetch(
+          `https://discord.com/api/v10/channels/${interaction.channel_id}/messages/${message.id}`,
+          {
+            method: "DELETE",
+            headers: {
+              Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+            },
+          }
+        );
+        messagesDeleted++;
+        await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit prevention
+      }
+
+      lastId = messages[messages.length - 1].id;
+    }
+  } catch (error) {
+    console.error("Error clearing bot messages:", error);
+    throw error;
+  }
+}
 
 // Combine JSON parsing and verification into one middleware
 app.post("/interactions", express.json(), async (req, res, next) => {
@@ -54,6 +103,10 @@ app.post("/interactions", express.json(), async (req, res, next) => {
 
   const interaction = req.body;
 
+  const isDM = interaction.channel.type === ChannelType.DM;
+
+  const userId = isDM ? interaction.user.id : interaction.member.user.id;
+
   console.log("Interaction:", interaction);
 
   if (interaction.type === InteractionType.PING) {
@@ -65,101 +118,220 @@ app.post("/interactions", express.json(), async (req, res, next) => {
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name } = interaction.data;
 
-    if (name === "ask") {
-      // Acknowledge the interaction immediately
+    if (name === "cleardm") {
+      // Only allow in DMs
+      if (interaction.channel.type !== ChannelType.DM) {
+        return res.send({
+          type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: "This command can only be used in DMs.",
+          },
+        });
+      }
+
       await res.send({
-        type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
+        type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
         data: {
-          content: "Thinking about your question...",
+          content: "Deleting my messages...",
         },
       });
 
       try {
+        await clearBotDirectMessages(interaction);
+      } catch (error) {
+        console.error("Error:", error);
+        await fetch(
+          `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              content: "Error clearing messages.",
+            }),
+          }
+        );
+      }
+      return;
+    }
+
+    if (name === "ask") {
+      try {
         const content = interaction.data.options[0].value;
 
-        // Check if we're in a DM (channel type 1 is DM)
-        const isDM = interaction.channel.type === 1;
+        // Get username safely, handling both DM and server contexts
+        const username = isDM
+          ? interaction.user.username
+          : interaction.member.user.username;
+
+        // Get user ID safely for cooldowns
+        const userId = isDM ? interaction.user.id : interaction.member.user.id;
+
+        // Check message length
+        if (content.length > MAX_MESSAGE_LENGTH) {
+          return res.send({
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: `Sorry, your message is too long (${content.length} characters). Please keep it under ${MAX_MESSAGE_LENGTH} characters.`,
+            },
+          });
+        }
+
+        // Check cooldown using the correct user ID
+        const now = Date.now();
+        const cooldownEnd = userCooldowns.get(userId) || 0;
+
+        if (now < cooldownEnd) {
+          const remainingTime = Math.ceil((cooldownEnd - now) / 1000);
+          return res.send({
+            type: InteractionResponseType.CHANNEL_MESSAGE_WITH_SOURCE,
+            data: {
+              content: `Please wait ${remainingTime} seconds before sending another message.`,
+            },
+          });
+        }
+
+        // Set cooldown with the correct user ID
+        userCooldowns.set(userId, now + COOLDOWN_PERIOD);
+
+        // Acknowledge the interaction
+        await res.send({
+          type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
+          data: {
+            content: "Thinking about your question...",
+          },
+        });
+
+        // Create thread if not in DM
+        if (!isDM) {
+          const threadResponse = await fetch(
+            `https://discord.com/api/v10/channels/${interaction.channel_id}/threads`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                name: `Question from ${username}`,
+                auto_archive_duration: 60,
+                type: ChannelType.PublicThread,
+              }),
+            }
+          );
+
+          const thread = await threadResponse.json();
+
+          // Send initial message in thread
+          await fetch(
+            `https://discord.com/api/v10/channels/${thread.id}/messages`,
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                content: "Let me help you with that!",
+              }),
+            }
+          );
+        }
 
         // Make request to your Mastra server
-        // const response = await fetch(
-        //   `${process.env.MASTRA_URL}/api/agents/discordMCPBotAgent/stream`,
-        //   {
-        //     method: "POST",
-        //     headers: {
-        //       "Content-Type": "application/json",
-        //     },
-        //     body: JSON.stringify({ messages: [{ role: "user", content }] }),
-        //   }
-        // );
+        const response = await fetch(
+          `${process.env.MASTRA_URL}/api/agents/discordMCPBotAgent/stream`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ messages: [{ role: "user", content }] }),
+          }
+        );
 
-        // const { fullStream } = await response.body;
-        const agent = await mastra.getAgent("discordMCPBotAgent");
-        const { fullStream } = await agent.stream(content, {
-          maxSteps: 10,
-        });
+        const reader = response.body?.getReader();
         let messageBuffer = "";
-        const checksShown = new Map<string, boolean>();
+        let textDecoder = new TextDecoder();
+        let partialLine = "";
 
-        for await (const part of fullStream) {
-          switch (part.type) {
-            case "text-delta":
-              messageBuffer += part.textDelta;
-              break;
-            case "tool-call":
-              console.log("tool call", part.toolName);
-              if (part.toolName.includes("mastra_mastra")) {
-                const toolName = part.toolName.replace("mastra_mastra", "");
-                if (!checksShown.has(toolName)) {
-                  // Send tool call updates via webhook
+        while (reader) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          // Convert bytes to text
+          const text = textDecoder.decode(value, { stream: true });
+          const lines = (partialLine + text).split("\n");
+
+          // Save the last partial line for next iteration
+          partialLine = lines.pop() || "";
+
+          // Process each complete line
+          for (const line of lines) {
+            if (!line.trim()) continue;
+
+            try {
+              const part = JSON.parse(line);
+
+              switch (part.type) {
+                case "text-delta":
+                  messageBuffer += part.textDelta;
+                  break;
+                case "tool-call":
+                  console.log("tool call", part.toolName);
+                  if (part.toolName.includes("mastra_mastra")) {
+                    const toolName = part.toolName.replace("mastra_mastra", "");
+                    await fetch(
+                      `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
+                      {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          content: `Checking ${toolName}. Please wait...`,
+                        }),
+                      }
+                    );
+                  }
+                  break;
+                case "tool-result":
+                  console.log("tool result", part.toolName);
+                  break;
+                case "error":
+                  console.error("Tool error:", part.error);
                   await fetch(
                     `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
                     {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
-                        content: `Checking ${toolName}. Please wait...`,
+                        content:
+                          "Sorry, there was an error executing the tool.",
                       }),
                     }
                   );
-                  checksShown.set(toolName, true);
-                }
+                  break;
+                case "finish":
+                  break;
               }
-              break;
-            case "tool-result":
-              console.log("tool result", part.toolName);
-              break;
-            case "error":
-              console.error("Tool error:", part.error);
-              await fetch(
-                `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    content: "Sorry, there was an error executing the tool.",
-                  }),
-                }
-              );
-              break;
-            case "finish":
-              break;
-          }
-          if (messageBuffer.length > 1900) {
-            // Send accumulated message via webhook
-            await fetch(
-              `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ content: messageBuffer }),
+
+              if (messageBuffer.length > DISCORD_MESSAGE_LENGTH_LIMIT) {
+                await fetch(
+                  `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
+                  {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ content: messageBuffer }),
+                  }
+                );
+                messageBuffer = "";
               }
-            );
-            messageBuffer = "";
+            } catch (error) {
+              console.error("Error parsing JSON:", error, "Line:", line);
+            }
           }
         }
 
+        // Send any remaining message
         if (messageBuffer.length > 0) {
-          // Send final message via webhook
           await fetch(
             `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
             {
@@ -170,15 +342,14 @@ app.post("/interactions", express.json(), async (req, res, next) => {
           );
         }
       } catch (error) {
+        // Remove cooldown on error using the correct user ID
+        userCooldowns.delete(userId);
         console.error("Error:", error);
-        // Send error message using webhook
         await fetch(
           `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
           {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               content: "Sorry, I encountered an error processing your request.",
             }),

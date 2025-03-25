@@ -6,7 +6,9 @@
   "main": "index.js",
   "version": "0.0.1",
   "scripts": {
-    "start": "mastra dev"
+    "start": "npx tsx bot/interactions.ts",
+    "register": "npx tsx scripts/register-commands.ts",
+    "dev": "npx tsx bot/interactions.ts"
   },
   "keywords": [
     "discord",
@@ -20,8 +22,10 @@
     "@mastra/core": "^0.6.4",
     "@mastra/mcp": "^0.3.5",
     "ai": "latest",
+    "discord-interactions": "^4.1.1",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.7",
+    "express": "^5.0.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {

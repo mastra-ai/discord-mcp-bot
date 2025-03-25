@@ -1,6 +1,12 @@
-import { ChannelType, Client, GatewayIntentBits, Partials, DMChannel } from 'discord.js';
-import { config } from 'dotenv';
-import { mastra } from './mastra';
+import {
+  ChannelType,
+  Client,
+  GatewayIntentBits,
+  Partials,
+  DMChannel,
+} from "discord.js";
+import { config } from "dotenv";
+import { mastra } from "../src/mastra";
 config();
 
 let client: Client | null = null;
@@ -21,7 +27,9 @@ async function clearBotDirectMessages(channel: DMChannel): Promise<void> {
       messages = await channel.messages.fetch({ limit: 100 });
 
       // Filter for only bot's own messages
-      const botMessages = messages.filter(msg => msg.author.id === channel.client.user.id);
+      const botMessages = messages.filter(
+        (msg) => msg.author.id === channel.client.user.id
+      );
 
       // If no bot messages are found, break the loop
       if (botMessages.size === 0) break;
@@ -33,25 +41,25 @@ async function clearBotDirectMessages(channel: DMChannel): Promise<void> {
           messagesDeleted++;
 
           // Add a small delay to avoid rate limits
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
         }
       }
     } while (messages.size >= 100);
 
     console.log(`Successfully deleted ${messagesDeleted} bot messages`);
   } catch (error) {
-    console.error('Error clearing bot messages:', error);
+    console.error("Error clearing bot messages:", error);
     throw error;
   }
 }
 
 async function getDiscordClient(): Promise<Client> {
   if (client && client.isReady()) {
-    console.log('Using existing Discord client');
+    console.log("Using existing Discord client");
     return client;
   }
 
-  console.log('Creating new Discord client');
+  console.log("Creating new Discord client");
   // Create a new client if one doesn't exist or isn't ready
   client = new Client({
     intents: [
@@ -238,9 +246,9 @@ async function getDiscordClient(): Promise<Client> {
 async function main() {
   try {
     const discord = await getDiscordClient();
-    console.log('Bot is ready!');
+    console.log("Bot is ready!");
   } catch (error) {
-    console.error('Failed to start bot:', error);
+    console.error("Failed to start bot:", error);
     process.exit(1);
   }
 }

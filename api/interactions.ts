@@ -6,6 +6,27 @@ import {
 import { ChannelType } from "discord.js";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import https from "node:https";
+
+// Define extended RequestInit type
+interface ExtendedRequestInit extends RequestInit {
+  agent?: https.Agent;
+}
+
+// Add this global fetch configuration
+global.fetch =
+  global.fetch ||
+  (async (url: string, init?: ExtendedRequestInit) => {
+    const agent = new https.Agent({
+      keepAlive: true,
+      rejectUnauthorized: true, // Ensures SSL/TLS certificates are verified
+    });
+
+    return fetch(url, {
+      ...init,
+      agent,
+    } as RequestInit);
+  });
 
 config();
 

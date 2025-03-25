@@ -8,25 +8,6 @@ import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import https from "node:https";
 
-// Define extended RequestInit type
-interface ExtendedRequestInit extends RequestInit {
-  agent?: https.Agent;
-}
-
-// Add this global fetch configuration
-global.fetch =
-  global.fetch ||
-  (async (url: string, init?: ExtendedRequestInit) => {
-    const agent = new https.Agent({
-      keepAlive: true,
-      rejectUnauthorized: true, // Ensures SSL/TLS certificates are verified
-    });
-
-    return fetch(url, {
-      ...init,
-      agent,
-    } as RequestInit);
-  });
 
 config();
 
@@ -44,6 +25,13 @@ async function updateDiscordMessage(
   let endpoint: string;
   let method: string;
   let headers: Record<string, string>;
+
+  // Create HTTPS agent for this request
+  const agent = new https.Agent({
+    keepAlive: true,
+    rejectUnauthorized: true,
+    timeout: 30000, // 30 second timeout
+  });
 
   if (threadId) {
     headers = {
@@ -66,19 +54,26 @@ async function updateDiscordMessage(
     };
   }
 
-  const response = await fetch(endpoint, {
-    method,
-    headers,
-    body: JSON.stringify({ content }),
-  });
+  try {
+    const response = await fetch(endpoint, {
+      method,
+      headers,
+      body: JSON.stringify({ content }),
+      agent, // Add the agent here
+      timeout: 30000, // Add explicit timeout
+    } as RequestInit);
 
-  if (!response.ok) {
-    throw new Error(
-      `Failed to update message: ${response.status} ${response.statusText}`
-    );
+    if (!response.ok) {
+      throw new Error(
+        `Failed to update message: ${response.status} ${response.statusText}`
+      );
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error("Fetch error:", error);
+    throw error;
   }
-
-  return await response.json();
 }
 
 async function handleResponse(
@@ -100,15 +95,23 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
     let messagesDeleted = 0;
     let lastId;
 
+    const agent = new https.Agent({
+      keepAlive: true,
+      rejectUnauthorized: true,
+      timeout: 30000,
+    });
+
     while (true) {
       const url: string = `https://discord.com/api/v10/channels/${
         interaction.channel_id
       }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
-      const response: any = await fetch(url, {
+      const response = await fetch(url, {
         headers: {
           Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
         },
-      });
+        agent,
+        timeout: 30000,
+      } as RequestInit);
 
       const messages = await response.json();
       if (!messages.length) break;
@@ -164,8 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const isDM = interaction.channel.type === ChannelType.DM;
   const userId = isDM ? interaction.user.id : interaction.member.user.id;
-
-
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
     const { name } = interaction.data;
@@ -238,7 +239,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                 auto_archive_duration: 60,
                 type: ChannelType.PublicThread,
               }),
-            }
+              agent: new https.Agent({
+                keepAlive: true,
+                rejectUnauthorized: true,
+                timeout: 30000,
+              }),
+              timeout: 30000,
+            } as RequestInit
           );
 
           const threadData = await threadResponse.json();
@@ -272,10 +279,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              messages: [{ role: "user", content }],
+            body: JSON.stringify({ messages: [{ role: "user", content }] }),
+            agent: new https.Agent({
+              keepAlive: true,
+              rejectUnauthorized: true,
+              timeout: 30000,
             }),
-          }
+            timeout: 30000,
+          } as RequestInit
         );
 
         if (!response.ok) {

@@ -3,7 +3,7 @@ import {
   InteractionResponseType,
   verifyKey,
 } from "discord-interactions";
-import { ChannelType } from "discord.js"; // Import from discord.js
+import { ChannelType, CommandInteraction } from "discord.js"; // Import from discord.js
 import express from "express";
 import { config } from "dotenv";
 
@@ -19,11 +19,6 @@ const app = express();
 
 // Add logging to help debug
 app.use((req, res, next) => {
-  console.log("Incoming request:", {
-    method: req.method,
-    path: req.path,
-    headers: req.headers,
-  });
   next();
 });
 
@@ -76,12 +71,33 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
   }
 }
 
+// Helper function to update Discord message
+async function updateDiscordMessage(
+  interaction: any,
+  content: string,
+  threadId?: string
+) {
+  const endpoint = threadId
+    ? `https://discord.com/api/v10/channels/${threadId}/messages`
+    : `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
+
+  const method = threadId ? "POST" : "PATCH";
+  const headers = {
+    "Content-Type": "application/json",
+    ...(threadId && { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }),
+  };
+
+  await fetch(endpoint, {
+    method,
+    headers,
+    body: JSON.stringify({ content }),
+  });
+}
+
 // Combine JSON parsing and verification into one middleware
 app.post("/interactions", express.json(), async (req, res, next) => {
   const signature = req.headers["x-signature-ed25519"];
   const timestamp = req.headers["x-signature-timestamp"];
-
-  console.log("Verification headers:", { signature, timestamp });
 
   if (!signature || !timestamp) {
     console.error("Missing signature or timestamp");
@@ -95,8 +111,6 @@ app.post("/interactions", express.json(), async (req, res, next) => {
     process.env.DISCORD_PUBLIC_KEY!
   );
 
-  console.log("Request verification:", isValidRequest);
-
   if (!isValidRequest) {
     return res.status(401).send("Invalid request signature");
   }
@@ -106,8 +120,6 @@ app.post("/interactions", express.json(), async (req, res, next) => {
   const isDM = interaction.channel.type === ChannelType.DM;
 
   const userId = isDM ? interaction.user.id : interaction.member.user.id;
-
-  console.log("Interaction:", interaction);
 
   if (interaction.type === InteractionType.PING) {
     return res.send({
@@ -176,7 +188,7 @@ app.post("/interactions", express.json(), async (req, res, next) => {
           });
         }
 
-        // Check cooldown using the correct user ID
+        // Check cooldown
         const now = Date.now();
         const cooldownEnd = userCooldowns.get(userId) || 0;
 
@@ -190,7 +202,7 @@ app.post("/interactions", express.json(), async (req, res, next) => {
           });
         }
 
-        // Set cooldown with the correct user ID
+        // Set cooldown
         userCooldowns.set(userId, now + COOLDOWN_PERIOD);
 
         // Acknowledge the interaction
@@ -202,6 +214,7 @@ app.post("/interactions", express.json(), async (req, res, next) => {
         });
 
         // Create thread if not in DM
+        let threadId;
         if (!isDM) {
           const threadResponse = await fetch(
             `https://discord.com/api/v10/channels/${interaction.channel_id}/threads`,
@@ -219,27 +232,19 @@ app.post("/interactions", express.json(), async (req, res, next) => {
             }
           );
 
-          const thread = await threadResponse.json();
+          const threadData = await threadResponse.json();
+          threadId = threadData.id;
 
-          // Send initial message in thread
-          await fetch(
-            `https://discord.com/api/v10/channels/${thread.id}/messages`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                content: "Let me help you with that!",
-              }),
-            }
+          // Update the original message to point to the thread
+          await updateDiscordMessage(
+            interaction,
+            `I've created a thread for our conversation: <#${threadId}>`
           );
         }
 
         // Make request to your Mastra server
         const response = await fetch(
-          `${process.env.MASTRA_URL}/api/agents/discordMCPBotAgent/stream`,
+          `${process.env.MASTRA_URL}/api/agents/discordMCPBotAgent/generate`,
           {
             method: "POST",
             headers: {
@@ -248,98 +253,19 @@ app.post("/interactions", express.json(), async (req, res, next) => {
             body: JSON.stringify({ messages: [{ role: "user", content }] }),
           }
         );
-
-        const reader = response.body?.getReader();
-        let messageBuffer = "";
-        let textDecoder = new TextDecoder();
-        let partialLine = "";
-
-        while (reader) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Convert bytes to text
-          const text = textDecoder.decode(value, { stream: true });
-          const lines = (partialLine + text).split("\n");
-
-          // Save the last partial line for next iteration
-          partialLine = lines.pop() || "";
-
-          // Process each complete line
-          for (const line of lines) {
-            if (!line.trim()) continue;
-
-            try {
-              const part = JSON.parse(line);
-
-              switch (part.type) {
-                case "text-delta":
-                  messageBuffer += part.textDelta;
-                  break;
-                case "tool-call":
-                  console.log("tool call", part.toolName);
-                  if (part.toolName.includes("mastra_mastra")) {
-                    const toolName = part.toolName.replace("mastra_mastra", "");
-                    await fetch(
-                      `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          content: `Checking ${toolName}. Please wait...`,
-                        }),
-                      }
-                    );
-                  }
-                  break;
-                case "tool-result":
-                  console.log("tool result", part.toolName);
-                  break;
-                case "error":
-                  console.error("Tool error:", part.error);
-                  await fetch(
-                    `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-                    {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({
-                        content:
-                          "Sorry, there was an error executing the tool.",
-                      }),
-                    }
-                  );
-                  break;
-                case "finish":
-                  break;
-              }
-
-              if (messageBuffer.length > DISCORD_MESSAGE_LENGTH_LIMIT) {
-                await fetch(
-                  `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-                  {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ content: messageBuffer }),
-                  }
-                );
-                messageBuffer = "";
-              }
-            } catch (error) {
-              console.error("Error parsing JSON:", error, "Line:", line);
-            }
-          }
+        if (!response.ok) {
+          throw new Error("Failed to generate response");
         }
+        const data = await response.json();
 
-        // Send any remaining message
+        const messageBuffer = await handleResponse(
+          data.text,
+          interaction,
+          threadId
+        );
+
         if (messageBuffer.length > 0) {
-          await fetch(
-            `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: messageBuffer }),
-            }
-          );
+          await updateDiscordMessage(interaction, messageBuffer, threadId);
         }
       } catch (error) {
         // Remove cooldown on error using the correct user ID
@@ -399,3 +325,25 @@ process.on("SIGINT", () => {
     process.exit(0);
   });
 });
+
+async function handleResponse(
+  text: string,
+  interaction: CommandInteraction,
+  threadId?: string
+): Promise<string> {
+  // If text is under limit, return it for final sending
+  if (text.length < DISCORD_MESSAGE_LENGTH_LIMIT) {
+    return text;
+  }
+
+  // Split into chunks and send all but the last one
+  let remaining = text;
+  while (remaining.length > DISCORD_MESSAGE_LENGTH_LIMIT) {
+    const chunk = remaining.slice(0, DISCORD_MESSAGE_LENGTH_LIMIT);
+    remaining = remaining.slice(DISCORD_MESSAGE_LENGTH_LIMIT);
+    await updateDiscordMessage(interaction, chunk, threadId);
+  }
+
+  // Return the final chunk for sending
+  return remaining;
+}

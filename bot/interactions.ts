@@ -206,7 +206,7 @@ app.post("/interactions", express.json(), async (req, res, next) => {
         userCooldowns.set(userId, now + COOLDOWN_PERIOD);
 
         if (!isDM) {
-          // Create thread
+          // Create thread and send initial messages
           const threadResponse = await fetch(
             `https://discord.com/api/v10/channels/${interaction.channel_id}/threads`,
             {
@@ -234,6 +234,9 @@ app.post("/interactions", express.json(), async (req, res, next) => {
             },
           });
 
+          // Echo the question
+          await updateDiscordMessage(interaction, `> ${content}`, threadId);
+
           // Send thinking message
           await updateDiscordMessage(
             interaction,
@@ -245,6 +248,9 @@ app.post("/interactions", express.json(), async (req, res, next) => {
           await res.send({
             type: InteractionResponseType.DEFERRED_CHANNEL_MESSAGE_WITH_SOURCE,
           });
+
+          // Echo the question after the deferred response
+          await updateDiscordMessage(interaction, `> ${content}`);
         }
 
         // Make request to Mastra server

@@ -80,10 +80,10 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
     let lastId;
 
     while (true) {
-      const url = `https://discord.com/api/v10/channels/${
+      const url: string = `https://discord.com/api/v10/channels/${
         interaction.channel_id
       }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
-      const response = await fetch(url, {
+      const response: any = await fetch(url, {
         headers: {
           Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
         },

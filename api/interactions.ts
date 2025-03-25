@@ -82,34 +82,46 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
       console.log("Fetching messages batch, lastId:", lastId);
 
       try {
-        // Let's try a direct fetch first with explicit error handling
-        const response = await fetch(
-          `https://discord.com/api/v10/channels/${
-            interaction.channel_id
-          }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`,
-          {
+        console.log("Making fetch request...");
+        const url = `https://discord.com/api/v10/channels/${
+          interaction.channel_id
+        }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
+        console.log("URL:", url);
+
+        try {
+          const response = await fetch(url, {
             headers: {
               Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
               "Content-Type": "application/json",
             },
-          }
-        );
-
-        console.log("Response status:", response.status);
-        console.log("Response headers:", response.headers);
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error("Discord API Error:", {
-            status: response.status,
-            statusText: response.statusText,
-            body: errorText,
           });
-          throw new Error(`Discord API error: ${response.status} ${errorText}`);
-        }
 
-        const rawMessages = await response.json();
-        console.log("Raw messages:", rawMessages);
+          console.log("Got response:", {
+            status: response.status,
+            ok: response.ok,
+            statusText: response.statusText,
+          });
+
+          if (!response.ok) {
+            const errorText = await response.text();
+            console.error("Discord API Error:", {
+              status: response.status,
+              statusText: response.statusText,
+              body: errorText,
+            });
+            break;
+          }
+
+          const messages = await response.json();
+          console.log("Messages received:", messages?.length || 0);
+        } catch (fetchError) {
+          console.error("Fetch failed:", fetchError);
+          console.error(
+            "Full fetch error:",
+            JSON.stringify(fetchError, null, 2)
+          );
+          break;
+        }
 
         // Use the proper REST method with options
         const options: any = { limit: 100 };

@@ -4,7 +4,11 @@ import {
   verifyKey,
 } from "discord-interactions";
 import { ChannelType, REST } from "discord.js";
-import { Routes, RESTGetAPIChannelMessagesQuery } from "discord-api-types/v10";
+import {
+  Routes,
+  RESTGetAPIChannelMessagesQuery,
+  RESTGetAPIChannelMessagesResult,
+} from "discord-api-types/v10";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
@@ -69,11 +73,18 @@ async function handleResponse(
 async function clearBotDirectMessages(interaction: any): Promise<void> {
   try {
     console.log("Starting to clear messages...");
+    console.log("Channel ID:", interaction.channel_id);
+    console.log("Application ID:", interaction.application_id);
     let messagesDeleted = 0;
     let lastId;
 
     while (true) {
       console.log("Fetching messages batch, lastId:", lastId);
+      console.log(
+        "Routes.channelMessages returns:",
+        Routes.channelMessages(interaction.channel_id)
+      );
+
       const queryString = new URLSearchParams({
         limit: "100",
         ...(lastId ? { before: lastId } : {}),
@@ -86,16 +97,13 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
       console.log("Making request to:", url);
 
       try {
-        const query: RESTGetAPIChannelMessagesQuery = {
-          limit: 100,
-          ...(lastId ? { before: lastId } : {}),
-        };
-        const messages = (await rest.get(
-          Routes.channelMessages(interaction.channel_id),
-          { query }
-        )) as RESTGetAPIChannelMessagesResult;
+        const endpoint = `channels/${interaction.channel_id}/messages`;
+        console.log("Using endpoint:", `/${endpoint}`);
 
-        console.log("Response received:", messages);
+        const messages = (await rest.get(
+          `/${endpoint}`
+        )) as RESTGetAPIChannelMessagesResult;
+        console.log("Raw response:", messages);
 
         if (!messages || !Array.isArray(messages)) {
           console.error("Unexpected response format:", messages);
@@ -170,6 +178,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const userId = isDM ? interaction.user.id : interaction.member.user.id;
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
+    console.log("Received application command:", interaction);
     const { name } = interaction.data;
 
     if (name === "cleardm") {

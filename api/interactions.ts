@@ -4,7 +4,7 @@ import {
   verifyKey,
 } from "discord-interactions";
 import { ChannelType, REST } from "discord.js";
-import { Routes } from "discord-api-types/v10";
+import { Routes, RESTGetAPIChannelMessagesQuery } from "discord-api-types/v10";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
@@ -79,38 +79,66 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
         ...(lastId ? { before: lastId } : {}),
       });
 
-      console.log(
-        "Making request to:",
-        `${Routes.channelMessages(interaction.channel_id)}?${queryString}`
-      );
-      const messages = (await rest.get(
-        `${Routes.channelMessages(interaction.channel_id)}?${queryString}`
-      )) as any[];
+      const url = `${Routes.channelMessages(
+        interaction.channel_id
+      )}?${queryString}`;
 
-      console.log("Received messages:", messages.length);
+      console.log("Making request to:", url);
 
-      if (!messages.length) break;
+      try {
+        const query: RESTGetAPIChannelMessagesQuery = {
+          limit: 100,
+          ...(lastId ? { before: lastId } : {}),
+        };
+        const messages = (await rest.get(
+          Routes.channelMessages(interaction.channel_id),
+          { query }
+        )) as RESTGetAPIChannelMessagesResult;
 
-      const botMessages = messages.filter(
-        (msg) => msg.author.id === interaction.application_id
-      );
+        console.log("Response received:", messages);
 
-      console.log("Found bot messages:", botMessages.length);
+        if (!messages || !Array.isArray(messages)) {
+          console.error("Unexpected response format:", messages);
+          break;
+        }
 
-      for (const message of botMessages) {
-        await rest.delete(
-          Routes.channelMessage(interaction.channel_id, message.id)
+        if (!messages.length) {
+          console.log("No more messages found");
+          break;
+        }
+
+        console.log(`Found ${messages.length} messages`);
+
+        const botMessages = messages.filter(
+          (msg) => msg.author.id === interaction.application_id
         );
-        messagesDeleted++;
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
+        console.log("Bot messages to delete:", botMessages.length);
 
-      lastId = messages[messages.length - 1].id;
-      console.log("Updated lastId:", lastId);
+        for (const message of botMessages) {
+          try {
+            console.log("Attempting to delete message:", message.id);
+            await rest.delete(
+              Routes.channelMessage(interaction.channel_id, message.id)
+            );
+            console.log("Successfully deleted message:", message.id);
+            messagesDeleted++;
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          } catch (deleteError) {
+            console.error("Error deleting message:", message.id, deleteError);
+          }
+        }
+
+        lastId = messages[messages.length - 1].id;
+        console.log("Updated lastId:", lastId);
+      } catch (batchError) {
+        console.error("Error processing batch:", batchError);
+        break;
+      }
     }
+
     console.log("Finished clearing messages, total deleted:", messagesDeleted);
   } catch (error) {
-    console.error("Error clearing bot messages:", error);
+    console.error("Error in clearBotDirectMessages:", error);
     throw error;
   }
 }

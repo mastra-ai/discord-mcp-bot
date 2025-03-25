@@ -3,7 +3,7 @@ import {
   InteractionResponseType,
   verifyKey,
 } from "discord-interactions";
-import { ChannelType, REST, RESTGetAPIChannelMessagesQuery } from "discord.js";
+import { ChannelType, REST } from "discord.js";
 import { Routes } from "discord-api-types/v10";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
@@ -68,24 +68,34 @@ async function handleResponse(
 
 async function clearBotDirectMessages(interaction: any): Promise<void> {
   try {
+    console.log("Starting to clear messages...");
     let messagesDeleted = 0;
     let lastId;
 
     while (true) {
+      console.log("Fetching messages batch, lastId:", lastId);
       const queryString = new URLSearchParams({
         limit: "100",
         ...(lastId ? { before: lastId } : {}),
       });
 
+      console.log(
+        "Making request to:",
+        `${Routes.channelMessages(interaction.channel_id)}?${queryString}`
+      );
       const messages = (await rest.get(
         `${Routes.channelMessages(interaction.channel_id)}?${queryString}`
       )) as any[];
+
+      console.log("Received messages:", messages.length);
 
       if (!messages.length) break;
 
       const botMessages = messages.filter(
         (msg) => msg.author.id === interaction.application_id
       );
+
+      console.log("Found bot messages:", botMessages.length);
 
       for (const message of botMessages) {
         await rest.delete(
@@ -96,7 +106,9 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
       }
 
       lastId = messages[messages.length - 1].id;
+      console.log("Updated lastId:", lastId);
     }
+    console.log("Finished clearing messages, total deleted:", messagesDeleted);
   } catch (error) {
     console.error("Error clearing bot messages:", error);
     throw error;

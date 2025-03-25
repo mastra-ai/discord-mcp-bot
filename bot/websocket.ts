@@ -6,7 +6,7 @@ import {
   DMChannel,
 } from "discord.js";
 import { config } from "dotenv";
-import { mastra } from "../src/mastra";
+import { mastra } from "../src/mastra/index.js";
 config();
 
 let client: Client | null = null;

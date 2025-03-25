@@ -3,10 +3,9 @@ import {
   InteractionResponseType,
   verifyKey,
 } from "discord-interactions";
-import { ChannelType } from "discord.js";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { retryableFetch } from "./helpers/fetch";
+import { retryableFetch } from "./helpers/fetch.js";
 
 config();
 
@@ -85,53 +84,68 @@ async function clearBotDirectMessages(interaction: any): Promise<void> {
   let messagesDeleted = 0;
   let lastId;
 
-  while (true) {
-    console.log("Fetching messages batch, lastId:", lastId);
+  try {
+    while (true) {
+      console.log("Fetching messages batch, lastId:", lastId);
 
-    try {
-      const url: string = `https://discord.com/api/v10/channels/${
-        interaction.channel_id
-      }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
+      try {
+        const url: string = `https://discord.com/api/v10/channels/${
+          interaction.channel_id
+        }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
 
-      const messages = await retryableFetch<DiscordMessage[]>(url, {
-        headers: {
-          Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      });
+        const options = {
+          method: "GET", // Explicitly setting the method
+          headers: {
+            Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+        };
 
-      console.log("Messages received:", messages?.length || 0);
+        console.log("Making request with:", {
+          url,
+          method: options.method,
+        });
 
-      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        const messages = await retryableFetch<DiscordMessage[]>(url, options);
+
+        console.log("Messages received:", messages?.length || 0);
+
+        if (!messages || !Array.isArray(messages) || messages.length === 0) {
+          break;
+        }
+
+        const botMessages = messages.filter(
+          (msg) => msg.author.id === interaction.application_id
+        );
+        console.log(`Found ${botMessages.length} bot messages to delete`);
+
+        for (const message of botMessages) {
+          try {
+            const deleteUrl = `https://discord.com/api/v10/channels/${interaction.channel_id}/messages/${message.id}`;
+            await retryableFetch(deleteUrl, {
+              method: "DELETE",
+              headers: {
+                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+            });
+            messagesDeleted++;
+            await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit compliance
+          } catch (deleteError) {
+            console.error("Failed to delete message:", message.id, deleteError);
+          }
+        }
+
+        lastId = messages[messages.length - 1].id;
+      } catch (batchError) {
+        console.error("Batch processing failed:", batchError);
         break;
       }
-
-      const botMessages = messages.filter(
-        (msg) => msg.author.id === interaction.application_id
-      );
-
-      for (const message of botMessages) {
-        try {
-          const deleteUrl = `https://discord.com/api/v10/channels/${interaction.channel_id}/messages/${message.id}`;
-          await retryableFetch(deleteUrl, {
-            method: "DELETE",
-            headers: {
-              Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
-              "Content-Type": "application/json",
-            },
-          });
-          messagesDeleted++;
-          await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit compliance
-        } catch (deleteError) {
-          console.error("Failed to delete message:", message.id, deleteError);
-        }
-      }
-
-      lastId = messages[messages.length - 1].id;
-    } catch (batchError) {
-      console.error("Batch processing failed:", batchError);
-      break;
     }
+  } catch (error) {
+    console.error("Error in clearBotDirectMessages:", error);
+    console.error("Error clearing messages:", error);
+    throw error;
   }
 }
 
@@ -158,7 +172,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (interaction.type === InteractionType.PING) {
     return res.send({ type: InteractionResponseType.PONG });
   }
-  const isDM = interaction.channel.type === ChannelType.DM;
+  const isDM = interaction.channel.type === 1;
   const userId = isDM ? interaction.user.id : interaction.member.user.id;
 
   if (interaction.type === InteractionType.APPLICATION_COMMAND) {
@@ -231,7 +245,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
               body: JSON.stringify({
                 name: `Chat with ${username}`,
                 auto_archive_duration: 60,
-                type: ChannelType.PublicThread,
+                type: 11,
               }),
             }
           );

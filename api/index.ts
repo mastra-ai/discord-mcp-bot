@@ -1,13 +1,17 @@
 import express from "express";
-import handler from "./api/interactions.js"; // Note the .js extension for ESM
+import handler from "../bot/interactions.js"; // Note the .js extension for ESM
 
-const app = express();
+export const app = express();
 app.use(express.json());
 
-// Wrap the Vercel handler for Express
+app.get("/", (req, res) => {
+  res.send("Hello World");
+});
+
+// // Wrap the Vercel handler for Express
 app.post("/api/interactions", async (req, res) => {
   try {
-    await handler(req, res);
+    await handler(req as any, res as any);
   } catch (error) {
     console.error("Error:", error);
     res.status(500).json({ error: "Internal server error" });

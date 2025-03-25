@@ -6,8 +6,8 @@
   "main": "index.js",
   "version": "0.0.1",
   "scripts": {
-    "start": "npx tsx api/interactions.ts",
-    "dev": "npx tsx api/interactions.ts",
+    "start": "vercel dev",
+    "dev-server": "npx tsx dev-server.js",
     "register": "npx tsx scripts/register-commands.ts",
     "delete": "npx tsx scripts/delete-commands.ts",
     "list": "npx tsx scripts/list-commands.ts"
@@ -23,6 +23,7 @@
     "@ai-sdk/openai": "latest",
     "@mastra/core": "^0.6.4",
     "@mastra/mcp": "^0.3.5",
+    "@vercel/node": "^3.0.0",
     "ai": "latest",
     "discord-interactions": "^4.1.1",
     "discord.js": "^14.14.1",

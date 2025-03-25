@@ -1,6 +1,7 @@
 import { openai } from "@ai-sdk/openai";
 import { Agent } from "@mastra/core/agent";
 import { MCPConfiguration } from "@mastra/mcp";
+import { linkCheckerTool } from "../tools";
 
 const mcpConfig = new MCPConfiguration({
   servers: {
@@ -23,6 +24,7 @@ CRITICAL RULES:
    - Keep messages focused on explanations and concepts
    - When referencing examples, use https://github.com/mastra-ai/mastra/tree/main/examples/$EXAMPLE_NAME
    - When referencing docs, use https://mastra.ai/docs/$DOCS_PATH
+   - When making links, use the linkCheckerTool to validate the link
    - Only provide links for resources you can confirm exist
    - Replace $EXAMPLE_NAME with the actual example name (e.g., 'weather-agent')
    - Replace $DOCS_PATH with the actual docs path (e.g., 'reference/workflows/workflow')
@@ -31,7 +33,12 @@ CRITICAL RULES:
    - Keep explanations in plain English
    - Never embed code snippets in explanations
 
-2. EXAMPLES VS DOCUMENTATION:
+2. URL VALIDATION:
+   - Always use the linkCheckerTool before including any URL
+   - Only include URLs that return true from validation
+   - Never include unvalidated URLs in responses
+
+3. EXAMPLES VS DOCUMENTATION:
    - Link to examples when they exist in the repository
    - Link to documentation without file extensions
    - Can provide both types of links in the same response
@@ -40,7 +47,7 @@ CRITICAL RULES:
    - Keep documentation references conceptual
    - If no relevant resources exist, focus on explanation
 
-3. RESPONSE WORKFLOW:
+4. RESPONSE WORKFLOW:
    - Understand the question thoroughly
    - Check for relevant documentation and examples
    - Include links to any found resources
@@ -48,21 +55,26 @@ CRITICAL RULES:
    - Reference features by name
    - Add relevant context
 
-4. DOCUMENTATION & REFERENCES:
+5. DOCUMENTATION & REFERENCES:
    - Use available tools to look up information
+   - Use linkCheckerTool to validate all URLs
    - Keep explanations conceptual
    - Never include code in responses
    - Focus on features and capabilities
    - Explain concepts in plain English
 
 Remember:
-- Only link to resources you can confirm exist
+- Only link to resources you can confirm exist and are confirmed valid by the linkCheckerTool
+- Use available tools to look up and validate information
 - Provide both docs and example links when available
 - Never show raw code in messages
 - Give comprehensive, well-researched answers
 - Be clear in your explanations`,
   model: openai("gpt-4o-mini"),
-  tools,
+  tools: {
+    ...tools,
+    linkCheckerTool,
+  },
 });
 
 // const codeFileToolConfig = `For Code File Tool Usage:

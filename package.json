@@ -5,6 +5,9 @@
   "description": "A Discord MCP Bot",
   "main": "index.js",
   "version": "0.0.1",
+  "engines": {
+    "node": "18.x"
+  },
   "scripts": {
     "start": "vercel dev",
     "dev-server": "npx tsx dev-server.js",

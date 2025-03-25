@@ -3,20 +3,29 @@ import {
   InteractionResponseType,
   verifyKey,
 } from "discord-interactions";
-import { ChannelType, REST } from "discord.js";
-import {
-  Routes,
-  RESTGetAPIChannelMessagesQuery,
-  RESTGetAPIChannelMessagesResult,
-} from "discord-api-types/v10";
+import { ChannelType } from "discord.js";
 import { config } from "dotenv";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { retryableFetch } from "./helpers/fetch";
 
 config();
 
-const rest = new REST({ version: "10" }).setToken(
-  process.env.DISCORD_BOT_TOKEN!
-);
+// Add these interfaces at the top of the file
+interface DiscordMessage {
+  id: string;
+  author: {
+    id: string;
+  };
+}
+
+interface DiscordThread {
+  id: string;
+  name: string;
+}
+
+interface MastraResponse {
+  text: string;
+}
 
 const MAX_MESSAGE_LENGTH = 2000;
 const DISCORD_MESSAGE_LENGTH_LIMIT = 2000;
@@ -30,26 +39,27 @@ async function updateDiscordMessage(
   messageId?: string
 ) {
   try {
+    let url;
+    const options: RequestInit = {
+      method: threadId ? (messageId ? "PATCH" : "POST") : "PATCH",
+      headers: {
+        Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ content }),
+    };
+
     if (threadId) {
-      if (messageId) {
-        return await rest.patch(Routes.channelMessage(threadId, messageId), {
-          body: { content },
-        });
-      } else {
-        return await rest.post(Routes.channelMessages(threadId), {
-          body: { content },
-        });
-      }
+      url = messageId
+        ? `https://discord.com/api/v10/channels/${threadId}/messages/${messageId}`
+        : `https://discord.com/api/v10/channels/${threadId}/messages`;
     } else {
-      return await rest.patch(
-        Routes.webhookMessage(
-          interaction.application_id,
-          interaction.token,
-          "@original"
-        ),
-        { body: { content } }
-      );
+      url = `https://discord.com/api/v10/webhooks/${interaction.application_id}/${interaction.token}/messages/@original`;
     }
+
+    const response = await retryableFetch<DiscordMessage>(url, options);
+    if (!response) throw new Error("Failed to update message");
+    return response;
   } catch (error) {
     console.error("REST error:", error);
     throw error;
@@ -71,117 +81,57 @@ async function handleResponse(
 }
 
 async function clearBotDirectMessages(interaction: any): Promise<void> {
-  try {
-    console.log("Starting to clear messages...");
-    console.log("Channel ID:", interaction.channel_id);
+  console.log("Starting to clear messages...");
+  let messagesDeleted = 0;
+  let lastId;
 
-    let messagesDeleted = 0;
-    let lastId;
+  while (true) {
+    console.log("Fetching messages batch, lastId:", lastId);
 
-    while (true) {
-      console.log("Fetching messages batch, lastId:", lastId);
+    try {
+      const url: string = `https://discord.com/api/v10/channels/${
+        interaction.channel_id
+      }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
 
-      try {
-        console.log("Making fetch request...");
-        const url = `https://discord.com/api/v10/channels/${
-          interaction.channel_id
-        }/messages?limit=100${lastId ? `&before=${lastId}` : ""}`;
-        console.log("URL:", url);
+      const messages = await retryableFetch<DiscordMessage[]>(url, {
+        headers: {
+          Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      });
 
+      console.log("Messages received:", messages?.length || 0);
+
+      if (!messages || !Array.isArray(messages) || messages.length === 0) {
+        break;
+      }
+
+      const botMessages = messages.filter(
+        (msg) => msg.author.id === interaction.application_id
+      );
+
+      for (const message of botMessages) {
         try {
-          const response = await fetch(url, {
+          const deleteUrl = `https://discord.com/api/v10/channels/${interaction.channel_id}/messages/${message.id}`;
+          await retryableFetch(deleteUrl, {
+            method: "DELETE",
             headers: {
               Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
               "Content-Type": "application/json",
             },
           });
-
-          console.log("Got response:", {
-            status: response.status,
-            ok: response.ok,
-            statusText: response.statusText,
-          });
-
-          if (!response.ok) {
-            const errorText = await response.text();
-            console.error("Discord API Error:", {
-              status: response.status,
-              statusText: response.statusText,
-              body: errorText,
-            });
-            break;
-          }
-
-          const messages = await response.json();
-          console.log("Messages received:", messages?.length || 0);
-        } catch (fetchError) {
-          console.error("Fetch failed:", fetchError);
-          console.error(
-            "Full fetch error:",
-            JSON.stringify(fetchError, null, 2)
-          );
-          break;
+          messagesDeleted++;
+          await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit compliance
+        } catch (deleteError) {
+          console.error("Failed to delete message:", message.id, deleteError);
         }
-
-        // Use the proper REST method with options
-        const options: any = { limit: 100 };
-        if (lastId) options.before = lastId;
-
-        console.log("Making request with options:", options);
-
-        const endpoint = `channels/${interaction.channel_id}/messages`;
-        console.log("Using endpoint:", `/${endpoint}`);
-
-        const messages = (await rest.get(
-          Routes.channelMessages(interaction.channel_id),
-          { body: options } // Use body instead of query
-        )) as RESTGetAPIChannelMessagesResult;
-
-        console.log("Raw response:", messages);
-
-        if (!messages || !Array.isArray(messages)) {
-          console.error("Unexpected response format:", messages);
-          break;
-        }
-
-        if (!messages.length) {
-          console.log("No more messages found");
-          break;
-        }
-
-        console.log(`Found ${messages.length} messages`);
-
-        const botMessages = messages.filter(
-          (msg) => msg.author.id === interaction.application_id
-        );
-        console.log("Bot messages to delete:", botMessages.length);
-
-        for (const message of botMessages) {
-          try {
-            console.log("Attempting to delete message:", message.id);
-            await rest.delete(
-              Routes.channelMessage(interaction.channel_id, message.id)
-            );
-            console.log("Successfully deleted message:", message.id);
-            messagesDeleted++;
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-          } catch (deleteError) {
-            console.error("Error deleting message:", message.id, deleteError);
-          }
-        }
-
-        lastId = messages[messages.length - 1].id;
-        console.log("Updated lastId:", lastId);
-      } catch (batchError) {
-        console.error("Error processing batch:", batchError);
-        break;
       }
-    }
 
-    console.log("Finished clearing messages, total deleted:", messagesDeleted);
-  } catch (error) {
-    console.error("Error in clearBotDirectMessages:", error);
-    throw error;
+      lastId = messages[messages.length - 1].id;
+    } catch (batchError) {
+      console.error("Batch processing failed:", batchError);
+      break;
+    }
   }
 }
 
@@ -269,16 +219,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         userCooldowns.set(userId, now + COOLDOWN_PERIOD);
 
         if (!isDM) {
-          const threadData = (await rest.post(
-            Routes.threads(interaction.channel_id),
+          // Create thread using retryableFetch
+          const threadData = await retryableFetch<DiscordThread>(
+            `https://discord.com/api/v10/channels/${interaction.channel_id}/threads`,
             {
-              body: {
+              method: "POST",
+              headers: {
+                Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
                 name: `Chat with ${username}`,
                 auto_archive_duration: 60,
                 type: ChannelType.PublicThread,
-              },
+              }),
             }
-          )) as any;
+          );
+
+          if (!threadData?.id) throw new Error("Failed to create thread");
           threadId = threadData.id;
 
           await res.send({
@@ -304,7 +262,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           await updateDiscordMessage(interaction, `> ${content}`);
         }
 
-        const response = await fetch(
+        const response = await retryableFetch<MastraResponse>(
           `${process.env.MASTRA_URL}/api/agents/discordMCPBotAgent/generate`,
           {
             method: "POST",
@@ -313,12 +271,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           }
         );
 
-        if (!response.ok) {
-          throw new Error("Failed to generate response");
+        if (!response?.text) {
+          throw new Error("Invalid response from Mastra");
         }
 
-        const data = await response.json();
-        await handleResponse(data.text, interaction, threadId);
+        await handleResponse(response.text, interaction, threadId);
       } catch (error) {
         userCooldowns.delete(userId);
         console.error("Error:", error);

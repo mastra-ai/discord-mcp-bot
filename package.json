@@ -28,6 +28,7 @@
     "@mastra/mcp": "^0.3.5",
     "@vercel/node": "^3.0.0",
     "ai": "latest",
+    "async-retry-ng": "^2.0.2",
     "discord-interactions": "^4.1.1",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.7",

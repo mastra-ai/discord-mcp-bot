@@ -1,27 +1,26 @@
 import { createTool } from "@mastra/core";
 import { z } from "zod";
 export const linkCheckerTool = createTool({
-  id: "link-checker",
-  description: "Check if a link you are about to share is valid",
+  id: "linkCheckerTool",
+  description:
+    "CRITICAL: You MUST use this tool to validate EVERY URL before sharing it in your response. Never share a URL without first validating it with this tool. This includes all documentation links, example links, and any other URLs you plan to share.",
   inputSchema: z.object({
-    link: z.string({
-      message: "The link you are about to share",
-    }),
+    url: z.string().describe("The URL to validate (REQUIRED for every URL)"),
   }),
-  outputSchema: z.boolean({
-    message: "Whether the link is valid, true if it is, false if it is not",
+  outputSchema: z.object({
+    isValid: z.boolean().describe("True if URL is valid and can be shared"),
   }),
   execute: async ({ context, mastra }) => {
-    const logger = mastra?.logger;
+    const logger = mastra?.getLogger();
     try {
-      const { link } = context;
-      logger?.info("Checking link:", { link });
-      const response = await fetch(link, { method: "HEAD" });
+      const { url } = context;
+      logger?.info("Checking URL:", { url });
+      const response = await fetch(url, { method: "HEAD" });
       logger?.info("Response:", { response });
-      return response.ok;
+      return { isValid: response.ok };
     } catch (error) {
-      logger?.error("Error checking link:", { error });
-      return false;
+      logger?.error("Error checking URL:", { error });
+      return { isValid: false };
     }
   },
 });
